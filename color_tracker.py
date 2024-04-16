@@ -1,3 +1,4 @@
+# pylint: disable=no-member
 """
 CLI tool for tracking colors on provided video.
 Based on MVC pattern.
@@ -35,7 +36,14 @@ class ProcessingType(Enum):
     MASK = 5
 
 
-# Model
+class PreprocessingType(Enum):
+    """
+    Enum describing preprocessing type.
+    """
+    ERODE = 0
+    DILATE = 1
+
+
 class ColorTracker:
     """
     Class responsible for frame processing.
@@ -60,21 +68,71 @@ class ColorTracker:
         self._frame: None | np.ndarray = None
         self._processed_frame: None | np.ndarray = None
         self._processing_type: ProcessingType = ProcessingType.RAW
+        self._erosion_depth: int = 0
+        self._dilation_depth: int = 0
+        self._preprocessing_depth_handler = {
+            PreprocessingType.ERODE: self._increment_erode_depth,
+            PreprocessingType.DILATE: self._increment_dilate_depth
+        }
+
+    def update_ed_depths(self, preprocess: PreprocessingType) -> None:
+        """
+        Handles preprocessing depths changes.
+        :param preprocess: Preprocessing type
+        :return: None
+        """
+        self._preprocessing_depth_handler[preprocess]()
+
+    def _increment_erode_depth(self) -> None:
+        """
+        Increment the erosion depth variable.
+        :return: None
+        """
+        self._erosion_depth += 1
+        print(f'Erode depth: {self._erosion_depth}')
+
+    def _increment_dilate_depth(self) -> None:
+        """
+        Increments the dilation depth variable.
+        :return: None
+        """
+        self._dilation_depth += 1
+        print(f'Dilate depth: {self._dilation_depth}')
+
+    def _erode(self, img: np.ndarray) -> np.ndarray:
+        """
+        Method responsible for applying erosion to image passed as a parameter.
+        Uses (5, 5) kernel for optimal application.
+        :param img: np.ndarray: image submitted for erosion
+        :return: np.ndarray: eroded image
+        """
+        kernel = np.ones((5, 5), np.uint8)
+        return cv2.erode(img, kernel, iterations=self._erosion_depth)
+
+    def _dilate(self, img: np.ndarray) -> np.ndarray:
+        """
+        Method responsible for applying dilatation to image passed as a parameter.
+        Uses (5, 5) kernel for optimal application.
+        :param img: np.ndarray: image submitted for dilatation
+        :return: np.ndarray: dilated image
+        """
+        kernel = np.ones((5, 5), np.uint8)
+        return cv2.dilate(img, kernel, iterations=self._dilation_depth)
 
     def set_processing_type(self, processing_type: ProcessingType) -> None:
         """
         Setter method fot _processing_type property.
         :param processing_type:
-        :return:
+        :return: None
         """
         self._processing_type = processing_type
 
     def set_reference_color(self, x: int, y: int) -> None:
         """
         Setter method fot _tracked_color property.
-        :param x:
-        :param y:
-        :return:
+        :param x: X coordinate of cursor
+        :param y: Y coordinate of cursor
+        :return: None
         """
         hsv_frame: np.ndarray = cv2.cvtColor(self._frame, cv2.COLOR_RGB2HSV)
         self._tracked_color = hsv_frame[y, x, :]
@@ -82,25 +140,26 @@ class ColorTracker:
     def update_frame(self) -> bool:
         """
         Method responsible for continuous video updating.
-        :return:
+        :return: bool: True if video was read successfully, False otherwise.
         """
         read_successful, self._frame = self._video.read()
         if read_successful:
+            self._preprocess_frame()
             self._process_frame()
         return read_successful
 
     def _get_layer(self, layer_index: int) -> np.ndarray:
         """
         Method responsible for retrieving certain layer from HSV-converted frame.
-        :param layer_index:
-        :return:
+        :param layer_index: index of the layer (Hue:0, Saturation:1, Value:2)
+        :return: layer of the HSV frame color
         """
         return cv2.cvtColor(self._frame, cv2.COLOR_RGB2HSV)[:, :, layer_index]
 
     def _process_frame(self) -> None:
         """
         Method responsible for altering current frame based on the selected processing type.
-        :return:
+        :return: None
         """
         if self._processing_type is ProcessingType.RAW:
             self._processed_frame = self._frame
@@ -138,12 +197,22 @@ class ColorTracker:
             self._processed_frame = frame_with_color_tracking
             return
 
+    def _preprocess_frame(self) -> None:
+        """
+        Method responsible for preprocessing the frame - apply erosion and dilatation accordingly to
+        private depth variables incremented by user.
+        :return:
+        """
+        eroded = self._erode(self._frame)
+        eroded_and_dilated = self._dilate(eroded)
+        self._frame = eroded_and_dilated
+
     def _get_mask(self, mask: np.ndarray, index: int) -> np.ndarray:
         """
         Method responsible for preparing appropriate value detection in specified layer.
-        :param mask:
-        :param index:
-        :return:
+        :param mask: layer of the HSV frame color
+        :param index: index of the layer (Hue:0, Saturation:1, Value:2)
+        :return: black/white result mask based on the tolerance and selected color
         """
         if self._tracked_color is None:
             raise ValueError(TRACKING_COLOR_ERROR)
@@ -157,37 +226,28 @@ class ColorTracker:
     def _get_tracked_color_frame(self, mask: np.ndarray) -> np.ndarray:
         """
         Method responsible for enclosing detected shape in rectangle based on merged HSV masks.
-        :param mask:
-        :return:
+        :param mask: merged black/white masks to one mask
+        :return: frame with framed object of a certain color
         """
-        mask_ = Image.fromarray(mask)
-        bbox = mask_.getbbox()
+        mask_image = Image.fromarray(mask)
+        bounding_box = mask_image.getbbox()
 
-        if bbox is None:
+        if bounding_box is None:
             return mask
-        x1, y1, x2, y2 = bbox
+        x1, y1, x2, y2 = bounding_box
         drawing = cv2.rectangle(np.zeros_like(mask, dtype=np.uint8),
                                 (x1, y1), (x2, y2), WHITE_VALUE, 2)
         return drawing
 
-    def get_frame(self) -> np.ndarray:
-        """
-        Method returning current frame of the passed video.
-        :return:
-        """
-        if self._frame is None:
-            raise ValueError(NO_COLOR_TRACKER_ERROR)
-        return self._frame.copy()
-
     def get_processed_frame(self) -> np.ndarray:
         """
         Method returning altered current frame.
-        :return:
+        :return: a copy of processed frame
         """
-        return self._processed_frame.copy()
+        temp = self._processed_frame.copy()
+        return temp
 
 
-# View
 class Display:
     """
     Class responsible for displaying frames either original or altered frames from provided video
@@ -200,24 +260,22 @@ class Display:
     def update_display(self, image: np.ndarray) -> None:
         """
         Method responsible for updating the video with provided frame.
-        :param image:
-        :return:
+        :param image: original or altered video frame
+        :return: None
         """
         cv2.imshow(self._window_name, image)
 
     def get_window_name(self) -> str:
         """
         Method returning current window name.
-        :return:
+        :return: str: window name
         """
         return self._window_name
 
 
-# Controller
 class EventHandler:
     """
-    Class responsible for handling communication between ColorTracker (Model) class
-    and Display (View) class.
+    Class responsible for handling communication between ColorTracker (Model) and Display (View).
     Acts as Controller part of the MVC pattern.
     """
     PROCESSING_TYPE_BY_KEY = {
@@ -229,6 +287,11 @@ class EventHandler:
         ord('t'): ProcessingType.TRACKER
     }
 
+    PREPROCESSING_TYPE_BY_KEY = {
+        ord('e'): PreprocessingType.ERODE,
+        ord('d'): PreprocessingType.DILATE
+    }
+
     def __init__(self, tracker: ColorTracker, display: Display, timeout: int) -> None:
         self._window_name = display.get_window_name()
         self._tracker = tracker
@@ -238,10 +301,10 @@ class EventHandler:
     def _handle_mouse(self, event, x, y, flags=None, params=None) -> None:
         """
         Method responsible for handling mouse clicks.
-        :param event:
-        :param x:
-        :param y:
-        :return:
+        :param event:event object
+        :param x: x coordinate of the cursor collected after click
+        :param y: y coordinate of the cursor collected after click
+        :return: None
         """
         if event == cv2.EVENT_LBUTTONDOWN:
             self._tracker.set_reference_color(x, y)
@@ -249,19 +312,21 @@ class EventHandler:
     def _handle_keys(self) -> bool:
         """
         Method responsible for handling keyboard interrupts.
-        :return:
+        :return: bool: False if quit key is pressed, True otherwise
         """
         keycode = cv2.waitKey(self._timeout)
         if keycode == ord('q') or keycode == 27:
             return False
         if keycode in self.PROCESSING_TYPE_BY_KEY:
             self._tracker.set_processing_type(self.PROCESSING_TYPE_BY_KEY[keycode])
+        elif keycode in self.PREPROCESSING_TYPE_BY_KEY:
+            self._tracker.update_ed_depths(self.PREPROCESSING_TYPE_BY_KEY[keycode])
         return True
 
     def handle_events(self) -> bool:
         """
         Public method responsible handling for keyboard interrupts.
-        :return:
+        :return: result of handling keyboard interrupts
         """
         return self._handle_keys()
 
@@ -269,7 +334,7 @@ class EventHandler:
 def parse_arguments() -> argparse.Namespace:
     """
     Method responsible for parsing command line arguments.
-    :return:
+    :return: argparse.Namespace containing parsed arguments
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('-v', '--video-path', required=True, type=str,
@@ -287,8 +352,8 @@ def parse_arguments() -> argparse.Namespace:
 def main(args: argparse.Namespace) -> None:
     """
     Main method responsible for running the main functionality.
-    :param args:
-    :return:
+    :param args: parsed command line arguments
+    :return: None
     """
     try:
         tracker = ColorTracker(args.video_path, args.hue_tolerance, args.saturation_tolerance,
