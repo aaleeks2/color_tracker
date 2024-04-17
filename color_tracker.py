@@ -216,17 +216,21 @@ class ColorTracker:
         """
         if self._tracked_color is None:
             raise ValueError(TRACKING_COLOR_ERROR)
+        related_tolerance = self._tolerances_dict[index]
+        left_inner = np.where(mask <= self._tracked_color[index] + related_tolerance,
+                              mask,
+                              BLACK_VALUE)
 
-        left_inner = np.where(mask <= self._tracked_color[index] + self._tolerances_dict[index],
-                              mask, BLACK_VALUE)
-        return np.where(self._tracked_color[index] - self._tolerances_dict[index] <= left_inner,
+        return np.where(self._tracked_color[index] - related_tolerance <= left_inner,
                         WHITE_VALUE,
                         BLACK_VALUE)
 
     def _get_tracked_color_frame(self, mask: np.ndarray) -> np.ndarray:
         """
         Method responsible for enclosing detected shape in rectangle based on merged HSV masks.
-        :param mask: merged black/white masks to one mask
+        Bounding box consists of 4 coordinates (x1, y1, x2, y2) that are marking corners of the bounding box.
+        None-check performed to handle situations when the shape is absent on the screen.
+        :param mask: merged H, S and V masks to one mask
         :return: frame with framed object of a certain color
         """
         mask_image = Image.fromarray(mask)
